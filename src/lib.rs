@@ -4,3 +4,4 @@
 
 pub mod salt;
 
+extern crate core;

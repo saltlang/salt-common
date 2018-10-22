@@ -7,12 +7,18 @@ use std::fmt::Formatter;
 use std::fmt::Result;
 
 /// A single point in a file.
-#[derive(Eq, Hash, Ord)]
+#[derive(Copy, Eq, Hash, Ord)]
 pub struct Point {
     /// The line number, starting at 1
     pub line: u32,
     /// The column number, starting at 1
     pub col: u32
+}
+
+impl Clone for Point {
+    fn clone(&self) -> Self {
+        Point { line: self.line, col: self.col }
+    }
 }
 
 impl PartialEq for Point {
@@ -41,23 +47,23 @@ impl Display for Point {
 
 /// A location in a source file.
 #[derive(Debug, Eq, Hash, Ord)]
-pub enum Location<'a> {
-   /// A span in a source file.
+pub enum Location {
+   /// A span in a source file, starting at `start` and ending at `end`.
     Span {
         /// The starting position.
-        start: &'a Point,
+        start: Point,
         /// The ending position.
-        end: &'a Point
+        end: Point
     },
     /// A specific point in a source file.
     Point {
         /// The point in the file.
-        point: &'a Point
+        point: Point
     }
 }
 
-impl<'a> PartialEq for Location<'a> {
-    fn eq(&self, other: &Location<'a>) -> bool {
+impl<'a> PartialEq for Location {
+    fn eq(&self, other: &Location) -> bool {
         match (self, other) {
             (Location::Span { start: start1, end: end1 },
              Location::Span { start: start2, end: end2 }) =>
@@ -72,8 +78,8 @@ impl<'a> PartialEq for Location<'a> {
     }
 }
 
-impl<'a> PartialOrd for Location<'a> {
-    fn partial_cmp(&self, other: &Location<'a>) -> Option<Ordering> {
+impl<'a> PartialOrd for Location {
+    fn partial_cmp(&self, other: &Location) -> Option<Ordering> {
         match (self, other) {
             (Location::Span { start: start1, end: end1 },
              Location::Span { start: start2, end: end2 }) =>
@@ -92,7 +98,7 @@ impl<'a> PartialOrd for Location<'a> {
     }
 }
 
-impl<'a> Display for Location<'a> {
+impl<'a> Display for Location {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Location::Span { start, end } if start.line == end.line =>
@@ -104,13 +110,21 @@ impl<'a> Display for Location<'a> {
     }
 }
 
-/// A position referring to a point in a file.
+/// A position referring to a point in the file `filename`, at
+/// location `loc`.
 #[derive(Debug, Eq, Hash, Ord)]
 pub struct FilePosition<'a> {
     /// The file in which this occurs.
-    filename: &'a Filename<'a>,
+    pub filename: Filename<'a>,
     /// The location in the file.
-    loc: Location<'a>
+    pub loc: Location
+}
+
+pub trait FilePositionCtx<'a> {
+    fn point(&mut self, line: u32, col: u32) -> &FilePosition<'a>;
+
+    fn span(&mut self, start: &FilePosition<'a>,
+            end: &FilePosition<'a>) -> &FilePosition<'a>;
 }
 
 impl<'a> PartialEq for FilePosition<'a> {
@@ -121,7 +135,7 @@ impl<'a> PartialEq for FilePosition<'a> {
 
 impl<'a> PartialOrd for FilePosition<'a> {
     fn partial_cmp(&self, other: &FilePosition<'a>) -> Option<Ordering> {
-        Some(self.filename.cmp(other.filename).then(self.loc.cmp(&other.loc)))
+        Some(self.filename.cmp(&other.filename).then(self.loc.cmp(&other.loc)))
     }
 }
 
@@ -138,12 +152,12 @@ pub enum BasicPosition<'a> {
     /// A position referring to a point in a file.
     Content {
         /// The file position.
-        filepos: FilePosition<'a>
+        filepos: &FilePosition<'a>
     },
     /// A position referring to an entire file.
     File {
         /// The name of the file.
-        filename: &'a Filename<'a>
+        filename: Filename<'a>
     },
     /// A position referring to command-line arguments.
     CmdLine {
@@ -307,7 +321,7 @@ impl<'a, T: Ord, D: Ord> PartialOrd for DWARFPosition<'a, T, D> {
 /// Get information about position representations.
 pub trait PositionInfo<'a> {
     /// Get the basic position
-    fn location(&self) -> Option<(&'a Filename, Option<&'a Location<'a>>)>;
+    fn location(&self) -> Option<(&'a Filename, Option<&'a Location>)>;
 
     /// Get the children of the current position.
     fn children(&self) -> &[&Self];
@@ -336,8 +350,8 @@ impl<'a, T, D> From<BasicPosition<'a>> for DWARFPosition<'a, T, D> {
 }
 
 impl<'a> PositionInfo<'a> for FilePosition<'a> {
-    fn location(&self) -> Option<(&'a Filename, Option<&'a Location<'a>>)> {
-        Some((self.filename, Some(&self.loc)))
+    fn location(&self) -> Option<(&'a Filename, Option<&'a Location>)> {
+        Some((&self.filename, Some(&self.loc)))
     }
 
     fn children(&self) -> &[&Self] { &[] }
@@ -346,7 +360,7 @@ impl<'a> PositionInfo<'a> for FilePosition<'a> {
 }
 
 impl<'a> PositionInfo<'a> for BasicPosition<'a> {
-    fn location(&self) -> Option<(&'a Filename, Option<&'a Location<'a>>)> {
+    fn location(&self) -> Option<(&'a Filename, Option<&'a Location>)> {
         match self {
             BasicPosition::Content { filepos } => filepos.location(),
             BasicPosition::File { filename } => Some((filename, None)),
@@ -363,5 +377,11 @@ impl<'a> PositionInfo<'a> for BasicPosition<'a> {
     }
 
     fn children(&self) -> &[&Self] { &[] }
-    fn show_ctx(&self) -> bool { true }
+
+    fn show_ctx(&self) -> bool {
+        match self {
+            BasicPosition::Content { .. } => true,
+            _ => false
+        }
+    }
 }
